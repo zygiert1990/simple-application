@@ -1,3 +1,4 @@
+
 val tapirVersion = "1.11.13"
 
 lazy val rootProject = (project in file("."))
@@ -12,10 +13,17 @@ lazy val rootProject = (project in file("."))
         "ch.qos.logback" % "logback-classic" % "1.5.16",
         "com.softwaremill.sttp.tapir" %% "tapir-sttp-stub-server" % tapirVersion % Test,
         "org.scalatest" %% "scalatest" % "3.2.19" % Test
+      ),
+      graalVMNativeImageOptions ++= Seq(
+        "--no-fallback",
+        s"-H:ConfigurationFileDirectories=${(Compile / resourceDirectory).value / "native-config" }",
+        "--initialize-at-build-time=ch.qos.logback,org.codehaus,org.slf4j",
+        "--initialize-at-run-time=io.netty"
       )
     )
   )
   .settings(fatJarSettings)
+  .enablePlugins(GraalVMNativeImagePlugin)
 
 lazy val fatJarSettings = Seq(
   assembly / assemblyJarName := "simple-application.jar",
