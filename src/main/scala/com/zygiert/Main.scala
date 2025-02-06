@@ -33,8 +33,18 @@ class ServerManager(val binding: Future[NettyFutureServerBinding]) extends Resou
     ()
 
   override def afterRestore(context: Context[_ <: Resource]): Unit =
-    println(s"we are inside restore")
-    ()
+    println(s"restore started")
+    val port = sys.env.get("HTTP_PORT").flatMap(_.toIntOption).getOrElse(8080)
+    val program =
+      for
+        binding <- NettyFutureServer().port(port).addEndpoints(Endpoints.all).start()
+        _ <- Future:
+          println(s"Server started at http://localhost:${binding.port}. Press ENTER key to exit.")
+          StdIn.readLine()
+        stop <- binding.stop()
+      yield stop
+
+    Await.result(program, Duration.Inf)
 
 object ServerManager:
   def apply(binding: Future[NettyFutureServerBinding]): ServerManager = new ServerManager(binding)
