@@ -10,6 +10,7 @@ lazy val rootProject = (project in file("."))
       libraryDependencies ++= Seq(
         "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % tapirVersion,
         "ch.qos.logback" % "logback-classic" % "1.5.16",
+        "org.crac" % "crac" % "1.5.0",
         "com.softwaremill.sttp.tapir" %% "tapir-sttp-stub-server" % tapirVersion % Test,
         "org.scalatest" %% "scalatest" % "3.2.19" % Test
       )
