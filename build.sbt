@@ -6,7 +6,7 @@ lazy val rootProject = (project in file("."))
       name := "simple-application",
       version := "0.1.0-SNAPSHOT",
       organization := "com.zygiert",
-      scalaVersion := "3.6.3",
+      scalaVersion := "3.7.0-RC1-bin-20250207-d60a914-NIGHTLY",
       libraryDependencies ++= Seq(
         "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % tapirVersion,
         "ch.qos.logback" % "logback-classic" % "1.5.16",
