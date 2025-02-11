@@ -18,7 +18,7 @@ lazy val rootProject = (project in file("."))
   .settings(fatJarSettings)
 
 lazy val fatJarSettings = Seq(
-  assembly / assemblyJarName := "simple-application.jar",
+  assembly / assemblyJarName := "simple-application-project-leyden.jar",
   assembly / assemblyMergeStrategy := {
     // SwaggerUI: https://tapir.softwaremill.com/en/latest/docs/openapi.html#using-swaggerui-with-sbt-assembly
     case PathList("META-INF", "maven", "org.webjars", "swagger-ui", "pom.properties") => MergeStrategy.singleOrError
