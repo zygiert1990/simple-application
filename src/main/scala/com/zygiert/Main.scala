@@ -3,48 +3,48 @@ package com.zygiert
 import org.crac.{Context, Core, Resource}
 import sttp.tapir.server.netty.{NettyFutureServer, NettyFutureServerBinding}
 
+import scala.concurrent.Await
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration
-import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.io.StdIn
 
 @main def run(): Unit =
 
-  val port = sys.env.get("HTTP_PORT").flatMap(_.toIntOption).getOrElse(8080)
-  val serverManager = ServerManager(NettyFutureServer().port(port).addEndpoints(Endpoints.all).start())
+  val serverManager = ServerManager()
   Core.getGlobalContext.register(serverManager)
-  val program =
-    for
-      binding <- serverManager.binding
-      _ <- Future:
-        println(s"Server started at http://localhost:${binding.port}. Press ENTER key to exit.")
-        StdIn.readLine()
-      stop <- binding.stop()
-    yield stop
+  serverManager.start()
+  // stdin is read on the main thread, a worker of the global ExecutionContext blocked on it
+  // starves request handling when the JVM sees 1 CPU
+  StdIn.readLine()
+  serverManager.stop()
 
-  Await.result(program, Duration.Inf)
+class ServerManager extends Resource:
 
-class ServerManager(val binding: Future[NettyFutureServerBinding]) extends Resource:
+  @volatile private var binding: Option[NettyFutureServerBinding] = None
 
-  override def beforeCheckpoint(context: Context[_ <: Resource]): Unit =
-    println(s"checkpoint started")
-    Await.result(binding.flatMap(_.stop()), Duration.Inf)
-    println(s"Checkpoint created")
-    ()
-
-  override def afterRestore(context: Context[_ <: Resource]): Unit =
-    println(s"restore started")
+  def start(): Unit =
+    val host = sys.env.getOrElse("HTTP_HOST", "0.0.0.0")
     val port = sys.env.get("HTTP_PORT").flatMap(_.toIntOption).getOrElse(8080)
-    val program =
-      for
-        binding <- NettyFutureServer().port(port).addEndpoints(Endpoints.all).start()
-        _ <- Future:
-          println(s"Server started at http://localhost:${binding.port}. Press ENTER key to exit.")
-          StdIn.readLine()
-        stop <- binding.stop()
-      yield stop
+    val started = Await.result(
+      NettyFutureServer().host(host).port(port).addEndpoints(Endpoints.all).start(),
+      Duration.Inf
+    )
+    binding = Some(started)
+    println(s"Server started at http://$host:${started.port}. Press ENTER key to exit.")
 
-    Await.result(program, Duration.Inf)
+  def stop(): Unit =
+    binding.foreach(b => Await.result(b.stop(), Duration.Inf))
+    binding = None
+
+  override def beforeCheckpoint(context: Context[? <: Resource]): Unit =
+    println(s"checkpoint started")
+    stop()
+    println(s"Checkpoint created")
+
+  // returns right after server start, thread which performed checkpoint must not be blocked
+  override def afterRestore(context: Context[? <: Resource]): Unit =
+    println(s"restore started")
+    start()
 
 object ServerManager:
-  def apply(binding: Future[NettyFutureServerBinding]): ServerManager = new ServerManager(binding)
+  def apply(): ServerManager = new ServerManager()
