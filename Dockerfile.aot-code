@@ -1,0 +1,73 @@
+# Leyden AOT cache WITH AOT code caching (app-code.aot)
+# Build: docker build -f Dockerfile.aot-code --build-arg TRAINING_CPUS=4 -t simple-application:leyden-aot-code-cpus4 .
+# Run:   docker run --rm --cpus=4 simple-application:leyden-aot-code-cpus4
+# TRAINING_CPUS must match --cpus used at runtime (default 1)
+
+FROM debian:trixie-20261005-slim AS jdk
+ARG JDK_URL=https://download.java.net/java/early_access/jdk28/20/GPL/openjdk-28-ea+20_linux-x64_bin.tar.gz
+ARG JDK_SHA256=fd0b94162fede0e2f7a31106a38d0105b23e96521d8c61c0f1a0967e1383b59d
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL -o /tmp/jdk.tar.gz "$JDK_URL" \
+    && echo "$JDK_SHA256  /tmp/jdk.tar.gz" | sha256sum -c - \
+    && mkdir -p /opt/jdk && tar -xzf /tmp/jdk.tar.gz -C /opt/jdk --strip-components=1 \
+    && rm /tmp/jdk.tar.gz
+ENV JAVA_HOME=/opt/jdk
+ENV PATH=/opt/jdk/bin:$PATH
+
+# ---------- stage 1a: build fat jar ----------
+FROM jdk AS build
+ARG SBT_URL=https://github.com/sbt/sbt/releases/download/v1.9.9/sbt-1.9.9.tgz
+ARG SBT_SHA256=c57cae60c2122ca1bba77184dfb4d0d25fc6c18805394ab36ab6208b0c0f262f
+RUN curl -fsSL -o /tmp/sbt.tgz "$SBT_URL" \
+    && echo "$SBT_SHA256  /tmp/sbt.tgz" | sha256sum -c - \
+    && tar -xzf /tmp/sbt.tgz -C /opt \
+    && rm /tmp/sbt.tgz
+ENV PATH=/opt/sbt/bin:$PATH
+WORKDIR /src
+COPY . .
+RUN sbt -batch assembly \
+    && cp target/scala-*/simple-application-project-leyden.jar /simple-application-project-leyden.jar
+
+# ---------- stage 1b: training run, produces app-code.aot ----------
+FROM jdk AS train
+# JVM sizes itself (GC/JIT threads, Netty event loops, ...) as with --cpus=$TRAINING_CPUS at runtime
+ARG TRAINING_CPUS=1
+ARG WARMUP_REQUESTS=1000
+WORKDIR /app
+COPY --from=build /simple-application-project-leyden.jar /app/simple-application-project-leyden.jar
+RUN <<'EOF'
+set -eu
+# app blocks on stdin after start, fifo keeps stdin open until we send ENTER
+mkfifo /tmp/stdin
+# timeout: fail instead of hanging forever if training gets stuck
+timeout 600 java -XX:ActiveProcessorCount=$TRAINING_CPUS -XX:AOTCacheOutput=app-code.aot \
+    -jar simple-application-project-leyden.jar < /tmp/stdin > /tmp/app.log 2>&1 &
+pid=$!
+exec 3> /tmp/stdin
+
+i=0
+until grep -q "Server started" /tmp/app.log; do
+    i=$((i + 1))
+    if ! kill -0 $pid 2> /dev/null || [ $i -gt 600 ]; then cat /tmp/app.log; exit 1; fi
+    sleep 0.1
+done
+
+for n in $(seq 1 $WARMUP_REQUESTS); do
+    curl -fsS -m 10 -o /dev/null "http://localhost:8080/hello?name=michal"
+done
+
+# ENTER -> app stops gracefully, JVM writes AOT cache on exit
+echo >&3
+wait $pid
+grep -i "aot" /tmp/app.log || true
+test -s app-code.aot
+EOF
+
+# ---------- stage 2: runtime image ----------
+FROM jdk
+WORKDIR /app
+# jar and cache copied together from training stage, AOT cache validates jar path, size and mtime
+COPY --from=train /app/simple-application-project-leyden.jar /app/app-code.aot /app/
+ENTRYPOINT ["java", "-XX:AOTCache=app-code.aot", "-jar", "simple-application-project-leyden.jar"]
