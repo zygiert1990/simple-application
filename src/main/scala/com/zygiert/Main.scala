@@ -2,21 +2,21 @@ package com.zygiert
 
 import sttp.tapir.server.netty.NettyFutureServer
 
+import scala.concurrent.Await
+import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration
-import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.io.StdIn
-import ExecutionContext.Implicits.global
 
 @main def run(): Unit =
 
+  val host = sys.env.getOrElse("HTTP_HOST", "0.0.0.0")
   val port = sys.env.get("HTTP_PORT").flatMap(_.toIntOption).getOrElse(8080)
-  val program =
-    for
-      binding <- NettyFutureServer().port(port).addEndpoints(Endpoints.all).start()
-      _ <- Future:
-        println(s"Server started at http://localhost:${binding.port}. Press ENTER key to exit.")
-        StdIn.readLine()
-      stop <- binding.stop()
-    yield stop
-
-  Await.result(program, Duration.Inf)
+  val binding = Await.result(
+    NettyFutureServer().host(host).port(port).addEndpoints(Endpoints.all).start(),
+    Duration.Inf
+  )
+  println(s"Server started at http://$host:${binding.port}. Press ENTER key to exit.")
+  // stdin is read on the main thread, a worker of the global ExecutionContext blocked on it
+  // starves request handling when the JVM sees 1 CPU
+  StdIn.readLine()
+  Await.result(binding.stop(), Duration.Inf)
